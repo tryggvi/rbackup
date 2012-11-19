@@ -91,7 +91,7 @@ if(!-d $tmpdir){
 }
 
 # Sync data
-my $cmd= "/usr/bin/rsync --delete-excluded $exclude --backup --backup-dir=$weekday_name --stats $options $bdir $ssh_user\@$server:current > $outfile";
+my $cmd= "/usr/bin/rsync --delete-excluded $exclude --backup --backup-dir=../$weekday_name --stats $options $bdir $ssh_user\@$server:current > $outfile";
 print "$cmd\n" if $debug;
 printlog("Syncing: $cmd");
 open(CMD, "$cmd|");
