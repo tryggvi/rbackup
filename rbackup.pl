@@ -8,35 +8,39 @@
 # Author: Tryggvi Farestveit <trygvi@ok.is>
 #############################
 use strict;
+use File::Temp qw/ tempdir /;
 
 #### Settings
 #
 # Server information
-my $server = "server.domain.com";
-my $ssh_user = "user";
+my $server = "backup.example.com";
+my $ssh_user = "backup";
+my $context = "dev.example.com";
+my $ssh_key = ""; # Use other than default SSH key
 
-#
+# Notification
 my $email=0; # Send email when finished
 my $email_to = "test\@domain.com";
 my $email_from = "Backup client <root\@domain.com>";
 my $email_subject = "Rsync backup for {HOSTNAME}"; # {HOSTNAME} will be replaced for hostname of the server
-#
+
+# Logging
 my $logfile = "/var/log/rbackup.log"; # Log file
 my $outfile = "/var/log/rbackup-out.log"; # Output of rsync cmd for last session
+
 # Directories to backup
 my @backup_dir = (
 	"/"
 );
-#
-# Files and directories to exclude
 
+# Files and directories to exclude
 my @exclude = (
 	"/tmp",
 	"/proc",
 	"/sys",
 	"/dev",
 );
-#
+
 # Misc
 my $options = "-v -a -R -z --delete --force --ignore-errors";
 my $debug = 0;
@@ -78,10 +82,16 @@ for(my $i=0; $i < scalar(@exclude); $i++){
 # Clear last incremental directory
 my $tmp = time();
 my $tmpdir = "/tmp/$tmp-rback";
-printlog("Incremeantal delete: Creating tmp dir $tmpdir");
+
+my $ssh_extra;
+if($ssh_key){
+	$ssh_extra = "-e \'ssh -i $ssh_key\'";
+}
+
+printlog("Incremental delete: Creating tmp dir $tmpdir");
 if(!-d $tmpdir){
 	mkdir $tmpdir, 0700;
-	my $cmd = "/usr/bin/rsync --delete -a $tmpdir/ $ssh_user\@$server:$weekday_name/";
+	my $cmd = "/usr/bin/rsync $ssh_extra --delete -a $tmpdir/ $ssh_user\@$server:$context/$weekday_name/";
 	printlog("Incremental delete: executing $cmd");
 	print "Incremental delete cmd: $cmd\n" if $debug;
 	open(CMD, "$cmd|");
@@ -90,8 +100,18 @@ if(!-d $tmpdir){
 	printlog("Incremental delete: Removing $tmpdir");
 }
 
+# Create context dir if it does not exist
+if($context){
+	my $tmpdir2 = File::Temp->newdir();
+	my $cmd_context= "/usr/bin/rsync  $ssh_extra -r $tmpdir2 $ssh_user\@$server:$context";
+	print "$cmd_context\n" if $debug;
+	printlog("Syncing: $cmd_context");
+	open(CMD, "$cmd_context|");
+	close(CMD);
+}
+
 # Sync data
-my $cmd= "/usr/bin/rsync --delete-excluded $exclude --backup --backup-dir=../$weekday_name --stats $options $bdir $ssh_user\@$server:current > $outfile";
+my $cmd= "/usr/bin/rsync --delete-excluded $ssh_extra $exclude --backup --backup-dir=../$weekday_name --stats $options $bdir $ssh_user\@$server:$context/current > $outfile";
 print "$cmd\n" if $debug;
 printlog("Syncing: $cmd");
 open(CMD, "$cmd|");
