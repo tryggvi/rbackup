@@ -17,6 +17,7 @@ my $server = "backup.example.com";
 my $ssh_user = "backup";
 my $context = "dev.example.com";
 my $ssh_key = ""; # Use other than default SSH key
+my $ssh_known_hosts = ""; # Use other known host file than default
 
 # Notification
 my $email=0; # Send email when finished
@@ -84,8 +85,17 @@ my $tmp = time();
 my $tmpdir = "/tmp/$tmp-rback";
 
 my $ssh_extra;
-if($ssh_key){
-	$ssh_extra = "-e \'ssh -i $ssh_key\'";
+if($ssh_key || $ssh_known_hosts){
+	$ssh_extra = "-e \'ssh ";
+	if($ssh_known_hosts){
+		$ssh_extra .= "-o UserKnownHostsFile=$ssh_known_hosts ";
+	}
+
+	if($ssh_key){
+		$ssh_extra .= "-i $ssh_key ";
+	}
+
+	$ssh_extra .= "\'";
 }
 
 printlog("Incremental delete: Creating tmp dir $tmpdir");
