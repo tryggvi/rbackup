@@ -172,6 +172,12 @@ sub getWeekDay($) {
 	return (qw(sun mon tue wed thu fri sat))[$val];
 }
 
+sub printlog($){
+	my($text) = @_;
+	my ($sec,$min,$hour,$day,$month,$year) = gettime();
+	print LOG "$year-$month-$day $hour:$min:$sec $text\n";
+}
+
 sub gettime(){
 	my $input = time();
 	my ($sec,$min,$hour,$day,$month,$year) = (localtime($input))[0,1,2,3,4,5];
@@ -194,12 +200,6 @@ sub gettime(){
 	}
 
 	return ($sec,$min,$hour,$day,$month,$year);
-}
-
-sub printlog($){
-	my($text) = @_;
-	my ($sec,$min,$hour,$day,$month,$year) = gettime();
-	print LOG "$year-$month-$day $hour:$min:$sec $text\n";
 }
 
 sub get_hostname(){
