@@ -28,7 +28,7 @@ sub script_dir {
 	$dir =~ s|/[^/]+$||;
 	return ($dir eq $0) ? '.' : $dir;
 }
-my ($o_verb, $o_help, $o_test, $o_debug, $o_run, $o_config, $o_stats);
+my ($o_verb, $o_help, $o_test, $o_debug, $o_run, $o_config, $o_stats, $o_hosts);
 
 # Logging
 sub printlog($){
@@ -90,6 +90,7 @@ sub check_options {
 		't'     => \$o_test,    'test'    => \$o_test,
 		'r'     => \$o_run,     'run'     => \$o_run,
 		's'     => \$o_stats,   'stats'   => \$o_stats,
+		'H'     => \$o_hosts,   'hosts'   => \$o_hosts,
 		'c=s'   => \$o_config,  'config=s'=> \$o_config,
 	);
 
@@ -113,6 +114,8 @@ sub check_options {
 		RunBackup();
 	} elsif(defined($o_stats)){
 		RunStats();
+	} elsif(defined($o_hosts)){
+		ListHosts();
 	} else {
 		help();
 	}
@@ -130,6 +133,8 @@ sub help() {
         Run backup
 -s, --stats
         Show backup statistics per host
+-H, --hosts
+        List configured hosts with include/exclude paths
 -c, --config
         Path to config file (default: rbackup.conf in script directory)
 -h, --help
@@ -213,6 +218,34 @@ sub gettime(){
 	return ($sec,$min,$hour,$day,$month,$year);
 }
 
+sub ListHosts(){
+	my @hosts = sort keys %hosts;
+
+	if(!@hosts){
+		print "No hosts configured.\n";
+		return;
+	}
+
+	print "Configured Hosts\n";
+	print "=" x 50 . "\n\n";
+
+	foreach my $host (@hosts){
+		print "Host: $host\n";
+
+		my $ipaddr = $hosts{$host}{ipaddr};
+		printf("  Connect        : %s\n", $ipaddr) if $ipaddr;
+		printf("  Backup dir     : %s/%s\n", $backup_dir, $host);
+
+		my @include = @{$hosts{$host}{include} || []};
+		printf("  Include        : %s\n", join(", ", @include)) if @include;
+
+		my @exclude = @{$hosts{$host}{exclude} || []};
+		printf("  Exclude        : %s\n", join(", ", @exclude)) if @exclude;
+
+		print "\n";
+	}
+}
+
 sub FormatSize($){
 	my ($bytes) = @_;
 	return "0 B" unless $bytes;
@@ -255,6 +288,7 @@ sub RunStats(){
 		my $differential_dir = "$backup_dir/$host/differential";
 
 		print "Host: $host\n";
+		printf("  Backup dir     : %s/%s\n", $backup_dir, $host);
 
 		if(-d $current_dir){
 			my $size_raw = `du -sb "$current_dir" 2>/dev/null`;
