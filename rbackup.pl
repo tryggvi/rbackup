@@ -251,8 +251,7 @@ sub ListHosts(){
 	foreach my $host (@hosts){
 		print "Host: $host\n";
 
-		my $disabled = $hosts{$host}{disabled} && $hosts{$host}{disabled} =~ /^(yes|true|1)$/i;
-		printf("  Status         : disabled\n") if $disabled;
+		printf("  Status         : DISABLED\n") if IsDisabled($host);
 
 		my $ipaddr = $hosts{$host}{ipaddr};
 		printf("  Connect        : %s\n", $ipaddr) if $ipaddr;
@@ -266,6 +265,38 @@ sub ListHosts(){
 
 		print "\n";
 	}
+}
+
+sub IsDisabled($){
+	my ($host) = @_;
+	return exists $hosts{$host} && $hosts{$host}{disabled} &&
+	       $hosts{$host}{disabled} =~ /^(yes|true|1)$/i;
+}
+
+sub WriteStatus($$$$$){
+	my ($host, $status, $exit_code, $timestamp, $duration) = @_;
+	my $status_file = "$backup_dir/$host/status";
+	open(my $fh, '>', $status_file) or return;
+	print $fh "status=$status\n";
+	print $fh "exit_code=$exit_code\n";
+	print $fh "timestamp=$timestamp\n";
+	print $fh "duration=$duration\n";
+	close($fh);
+}
+
+sub ReadStatus($){
+	my ($host) = @_;
+	my $status_file = "$backup_dir/$host/status";
+	return {} unless -f $status_file;
+	my %s;
+	open(my $fh, '<', $status_file) or return {};
+	while(my $line = <$fh>){
+		chomp $line;
+		my ($k, $v) = split(/=/, $line, 2);
+		$s{$k} = $v if defined $k && defined $v;
+	}
+	close($fh);
+	return \%s;
 }
 
 sub FormatSize($){
@@ -295,15 +326,25 @@ sub RunStats(){
 
 	my @hosts;
 	if($o_host){
-		if(!-d "$backup_dir/$o_host"){
-			print "No backup found for $o_host in $backup_dir.\n";
+		my $on_disk   = -d "$backup_dir/$o_host";
+		my $in_config = exists $hosts{$o_host};
+		if(!$on_disk && !$in_config){
+			print "No backup found for $o_host.\n";
 			return;
 		}
 		@hosts = ($o_host);
 	} else {
-		opendir(my $dh, $backup_dir) or die "Cannot open $backup_dir: $!\n";
-		@hosts = sort grep { !/^\./ && -d "$backup_dir/$_" } readdir($dh);
-		closedir($dh);
+		my %seen;
+		if(-d $backup_dir){
+			opendir(my $dh, $backup_dir) or die "Cannot open $backup_dir: $!\n";
+			@hosts = sort grep { !/^\./ && -d "$backup_dir/$_" } readdir($dh);
+			closedir($dh);
+			%seen = map { $_ => 1 } @hosts;
+		}
+		foreach my $h (sort keys %hosts){
+			push @hosts, $h if IsDisabled($h) && !$seen{$h};
+		}
+		@hosts = sort @hosts;
 	}
 
 	if(!@hosts){
@@ -320,6 +361,20 @@ sub RunStats(){
 
 		print "Host: $host\n";
 		printf("  Backup dir     : %s/%s\n", $backup_dir, $host);
+
+		if(IsDisabled($host)){
+			print "  Status         : DISABLED\n";
+		}
+
+		my $st = ReadStatus($host);
+		if(%$st){
+			printf("  Last backup    : %s  %s  (%ss)\n",
+				$st->{timestamp} || 'n/a',
+				$st->{status}    || 'unknown',
+				$st->{duration}  || '?');
+		} else {
+			print "  Last backup    : no status recorded\n";
+		}
 
 		if(-d $current_dir){
 			my $size_raw = `du -sb "$current_dir" 2>/dev/null`;
@@ -481,9 +536,12 @@ sub RunBackup(){
 		@run_hosts = keys %hosts;
 	}
 
+	my %summary;
+
 	foreach my $host (@run_hosts){
-		if($hosts{$host}{disabled} && $hosts{$host}{disabled} =~ /^(yes|true|1)$/i){
+		if(IsDisabled($host)){
 			printlog("Skipping $host (disabled)");
+			$summary{$host} = 'DISABLED';
 			next;
 		}
 
@@ -491,6 +549,7 @@ sub RunBackup(){
 		printlog("Backing up $host with user $user");
 		if(!$user){
 			printlog("Error: user for $host is missing");
+			$summary{$host} = 'FAILED (no user configured)';
 			next;
 		}
 
@@ -508,13 +567,28 @@ sub RunBackup(){
 
 		my ($sec,$min,$hour,$day,$month,$year) = gettime();
 		my $backup_suffix = "$year-$month-$day-$hour-$min";
+		my $timestamp     = "$year-$month-$day $hour:$min:$sec";
+		my $start_time    = time();
 
 		my $cmd = "/usr/bin/rsync --delete-excluded $ssh_extra ".$exclude_str." --backup --backup-dir=$host_backup_root/differential/$backup_suffix --stats $options $user\@".$target.$include_str." $host_backup_dir > $logdir/".$host."-".$backup_suffix.".log";
 		print "$cmd\n" if $debug;
 		printlog("Syncing: $cmd");
-		open(CMD, "$cmd|");
-		close(CMD);
-		printlog("Syncing: Finished");
+		system($cmd);
+		my $exit_code = $? >> 8;
+		my $duration  = time() - $start_time;
+
+		my $status = ($exit_code == 0) ? 'OK' : 'FAILED';
+		WriteStatus($host, $status, $exit_code, $timestamp, $duration);
+		$summary{$host} = ($exit_code == 0)
+			? "OK (${duration}s)"
+			: "FAILED (exit code $exit_code, ${duration}s)";
+		printlog("Syncing: Finished ($status, exit code $exit_code, ${duration}s)");
+	}
+
+	printlog("===========================");
+	printlog("Backup Summary:");
+	foreach my $host (sort keys %summary){
+		printlog("  $host: $summary{$host}");
 	}
 	printlog("Backup finished");
 	close(LOG);
