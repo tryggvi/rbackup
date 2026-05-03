@@ -28,7 +28,8 @@ sub script_dir {
 	$dir =~ s|/[^/]+$||;
 	return ($dir eq $0) ? '.' : $dir;
 }
-my ($o_verb, $o_help, $o_test, $o_debug, $o_run, $o_config, $o_stats, $o_hosts);
+my ($o_verb, $o_help, $o_test, $o_debug, $o_run, $o_config, $o_stats, $o_hosts, $o_host,
+    $o_list_files, $o_list_active_files, $o_list_archived_files);
 
 # Logging
 sub printlog($){
@@ -91,7 +92,11 @@ sub check_options {
 		'r'     => \$o_run,     'run'     => \$o_run,
 		's'     => \$o_stats,   'stats'   => \$o_stats,
 		'H'     => \$o_hosts,   'hosts'   => \$o_hosts,
-		'c=s'   => \$o_config,  'config=s'=> \$o_config,
+		'host=s'             => \$o_host,
+		'list-files'         => \$o_list_files,
+		'list-active-files'  => \$o_list_active_files,
+		'list-archived-files'=> \$o_list_archived_files,
+		'c=s'                => \$o_config,  'config=s' => \$o_config,
 	);
 
 	if(defined($o_help)){
@@ -116,6 +121,12 @@ sub check_options {
 		RunStats();
 	} elsif(defined($o_hosts)){
 		ListHosts();
+	} elsif(defined($o_list_files)){
+		RunListFiles('all');
+	} elsif(defined($o_list_active_files)){
+		RunListFiles('active');
+	} elsif(defined($o_list_archived_files)){
+		RunListFiles('archived');
 	} else {
 		help();
 	}
@@ -135,6 +146,14 @@ sub help() {
         Show backup statistics per host
 -H, --hosts
         List configured hosts with include/exclude paths
+--host=HOSTNAME
+        Limit -r, -s, or file listing to a single host
+--list-files
+        List all files (active and archived) per host
+--list-active-files
+        List files in the current/active backup per host
+--list-archived-files
+        List archived/differential files grouped by revision per host
 -c, --config
         Path to config file (default: rbackup.conf in script directory)
 -h, --help
@@ -271,9 +290,18 @@ sub RunStats(){
 		return;
 	}
 
-	opendir(my $dh, $backup_dir) or die "Cannot open $backup_dir: $!\n";
-	my @hosts = sort grep { !/^\./ && -d "$backup_dir/$_" } readdir($dh);
-	closedir($dh);
+	my @hosts;
+	if($o_host){
+		if(!-d "$backup_dir/$o_host"){
+			print "No backup found for $o_host in $backup_dir.\n";
+			return;
+		}
+		@hosts = ($o_host);
+	} else {
+		opendir(my $dh, $backup_dir) or die "Cannot open $backup_dir: $!\n";
+		@hosts = sort grep { !/^\./ && -d "$backup_dir/$_" } readdir($dh);
+		closedir($dh);
+	}
 
 	if(!@hosts){
 		print "No backups found in $backup_dir.\n";
@@ -334,6 +362,86 @@ sub RunStats(){
 	}
 }
 
+sub PrintDirFiles($$){
+	my ($dir, $indent) = @_;
+	my @lines = `find "$dir" -type f -printf '%s\t%T@\t%P\n' 2>/dev/null | sort -k3`;
+	if(!@lines){
+		print "${indent}  (empty)\n";
+		return;
+	}
+	foreach my $line (@lines){
+		chomp $line;
+		my ($size, $epoch, $path) = split(/\t/, $line, 3);
+		my ($sec,$min,$hour,$day,$month,$year) = (localtime(int($epoch)))[0,1,2,3,4,5];
+		my $date = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $year+1900, $month+1, $day, $hour, $min, $sec);
+		printf("%s%-60s  %8s  %s\n", $indent, $path, FormatSize($size), $date);
+	}
+}
+
+sub RunListFiles($){
+	my ($type) = @_;
+
+	if(!-d $backup_dir){
+		print "Backup directory $backup_dir does not exist.\n";
+		return;
+	}
+
+	my @hosts;
+	if($o_host){
+		if(!-d "$backup_dir/$o_host"){
+			print "No backup found for $o_host in $backup_dir.\n";
+			return;
+		}
+		@hosts = ($o_host);
+	} else {
+		opendir(my $dh, $backup_dir) or die "Cannot open $backup_dir: $!\n";
+		@hosts = sort grep { !/^\./ && -d "$backup_dir/$_" } readdir($dh);
+		closedir($dh);
+	}
+
+	if(!@hosts){
+		print "No backups found in $backup_dir.\n";
+		return;
+	}
+
+	foreach my $host (@hosts){
+		my $current_dir      = "$backup_dir/$host/current";
+		my $differential_dir = "$backup_dir/$host/differential";
+
+		print "Host: $host\n";
+
+		if($type eq 'active' || $type eq 'all'){
+			print "  [active]\n" if $type eq 'all';
+			if(-d $current_dir){
+				PrintDirFiles($current_dir, "  ");
+			} else {
+				print "  No active backup found.\n";
+			}
+		}
+
+		if($type eq 'archived' || $type eq 'all'){
+			print "  [archived]\n" if $type eq 'all';
+			if(-d $differential_dir){
+				opendir(my $ddh, $differential_dir) or next;
+				my @revisions = sort grep { !/^\./ && -d "$differential_dir/$_" } readdir($ddh);
+				closedir($ddh);
+				if(@revisions){
+					foreach my $rev (@revisions){
+						print "  [$rev]\n";
+						PrintDirFiles("$differential_dir/$rev", "    ");
+					}
+				} else {
+					print "  No archived files.\n";
+				}
+			} else {
+				print "  No archived files.\n";
+			}
+		}
+
+		print "\n";
+	}
+}
+
 sub RunBackup(){
 	open(LOG, ">>$logfile") or die "Cannot open log $logfile: $!\n";
 	printlog("===========================");
@@ -359,7 +467,18 @@ sub RunBackup(){
 	}
 
 	DirExists($logdir);
-	foreach my $host (keys %hosts){
+
+	my @run_hosts;
+	if($o_host){
+		if(!exists $hosts{$o_host}){
+			die "Host '$o_host' not found in config.\n";
+		}
+		@run_hosts = ($o_host);
+	} else {
+		@run_hosts = keys %hosts;
+	}
+
+	foreach my $host (@run_hosts){
 		my $user = $hosts{$host}{"user"};
 		printlog("Backing up $host with user $user");
 		if(!$user){
