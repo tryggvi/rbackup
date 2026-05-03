@@ -251,6 +251,9 @@ sub ListHosts(){
 	foreach my $host (@hosts){
 		print "Host: $host\n";
 
+		my $disabled = $hosts{$host}{disabled} && $hosts{$host}{disabled} =~ /^(yes|true|1)$/i;
+		printf("  Status         : disabled\n") if $disabled;
+
 		my $ipaddr = $hosts{$host}{ipaddr};
 		printf("  Connect        : %s\n", $ipaddr) if $ipaddr;
 		printf("  Backup dir     : %s/%s\n", $backup_dir, $host);
@@ -479,6 +482,11 @@ sub RunBackup(){
 	}
 
 	foreach my $host (@run_hosts){
+		if($hosts{$host}{disabled} && $hosts{$host}{disabled} =~ /^(yes|true|1)$/i){
+			printlog("Skipping $host (disabled)");
+			next;
+		}
+
 		my $user = $hosts{$host}{"user"};
 		printlog("Backing up $host with user $user");
 		if(!$user){

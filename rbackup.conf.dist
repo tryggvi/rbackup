@@ -14,6 +14,7 @@ options         = -v --info=BACKUP,COPY,DEL -a -R -z --delete --force --ignore-e
 # - Section name is the logical hostname, used for backup directories and logging
 # - ipaddr: optional, if set it is used for the actual SSH/rsync connection
 # - include, exclude: comma-separated paths (spaces around commas are ignored)
+# - disabled: set to yes to exclude from backup runs while keeping stats/history
 
 [test.example.com]
 user    = root
