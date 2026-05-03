@@ -1,0 +1,27 @@
+# rbackup.conf.dist — copy to rbackup.conf and edit
+#
+# Global settings and host definitions for rbackup.pl
+#
+
+[global]
+backup_dir      = /data/backup
+logdir          = /var/log/rbackup
+ssh_key         =
+ssh_known_hosts =
+options         = -v --info=BACKUP,COPY,DEL -a -R -z --delete --force --ignore-errors
+
+# Host definitions
+# - Section name is the logical hostname, used for backup directories and logging
+# - ipaddr: optional, if set it is used for the actual SSH/rsync connection
+# - include, exclude: comma-separated paths (spaces around commas are ignored)
+
+[test.example.com]
+user    = root
+include = /etc/, /home/
+exclude = /tmp/
+
+[prod-db.example.com]
+user    = backup
+ipaddr  = 192.168.1.50
+include = /
+exclude = /tmp/
