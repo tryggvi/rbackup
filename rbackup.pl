@@ -349,7 +349,7 @@ sub RunStatsTable(){
 			%seen = map { $_ => 1 } @hosts;
 		}
 		foreach my $h (sort keys %hosts){
-			push @hosts, $h if IsDisabled($h) && !$seen{$h};
+			push @hosts, $h unless $seen{$h};
 		}
 		@hosts = sort @hosts;
 	}
@@ -366,7 +366,9 @@ sub RunStatsTable(){
 
 		my $st          = ReadStatus($host);
 		my $last_backup = $st->{timestamp} || '-';
-		my $status      = IsDisabled($host) ? 'DISABLED' : ($st->{status} || '-');
+		my $status      = IsDisabled($host)           ? 'DISABLED'
+		                : !-d "$backup_dir/$host"      ? 'NEW'
+		                : ($st->{status}               || '-');
 		my $size        = '-';
 		my $files       = '-';
 		my $revisions   = '-';
@@ -388,6 +390,9 @@ sub RunStatsTable(){
 			$revisions = scalar @revs;
 		}
 
+		my @inc = exists $hosts{$host} ? @{$hosts{$host}{include} || []} : ();
+		my @exc = exists $hosts{$host} ? @{$hosts{$host}{exclude} || []} : ();
+
 		push @rows, {
 			host      => $host,
 			last      => $last_backup,
@@ -396,6 +401,8 @@ sub RunStatsTable(){
 			files     => $files,
 			revisions => "$revisions",
 			dir       => "$backup_dir/$host",
+			include   => @inc ? join(", ", @inc) : '-',
+			exclude   => @exc ? join(", ", @exc) : '-',
 		};
 	}
 
@@ -407,6 +414,8 @@ sub RunStatsTable(){
 		files     => length("Files"),
 		revisions => length("Revisions"),
 		dir       => length("Backup Dir"),
+		include   => length("Include"),
+		exclude   => length("Exclude"),
 	);
 	foreach my $row (@rows){
 		for my $col (keys %w){
@@ -414,14 +423,15 @@ sub RunStatsTable(){
 		}
 	}
 
-	my $fmt = "%-$w{host}s  %-$w{last}s  %-$w{status}s  %$w{size}s  %$w{files}s  %$w{revisions}s  %-$w{dir}s\n";
-	my $sep = "-" x ($w{host} + $w{last} + $w{status} + $w{size} + $w{files} + $w{revisions} + $w{dir} + 12);
+	my $fmt = "%-$w{host}s  %-$w{last}s  %-$w{status}s  %$w{size}s  %$w{files}s  %$w{revisions}s  %-$w{dir}s  %-$w{include}s  %s\n";
+	my $sep = "-" x ($w{host} + $w{last} + $w{status} + $w{size} + $w{files} + $w{revisions} + $w{dir} + $w{include} + $w{exclude} + 16);
 
-	printf($fmt, "Hostname", "Last Backup", "Status", "Size", "Files", "Revisions", "Backup Dir");
+	printf($fmt, "Hostname", "Last Backup", "Status", "Size", "Files", "Revisions", "Backup Dir", "Include", "Exclude");
 	print "$sep\n";
 	foreach my $row (@rows){
 		printf($fmt, $row->{host}, $row->{last}, $row->{status},
-		       $row->{size}, $row->{files}, $row->{revisions}, $row->{dir});
+		       $row->{size}, $row->{files}, $row->{revisions}, $row->{dir},
+		       $row->{include}, $row->{exclude});
 	}
 }
 
@@ -449,7 +459,7 @@ sub RunStats(){
 			%seen = map { $_ => 1 } @hosts;
 		}
 		foreach my $h (sort keys %hosts){
-			push @hosts, $h if IsDisabled($h) && !$seen{$h};
+			push @hosts, $h unless $seen{$h};
 		}
 		@hosts = sort @hosts;
 	}
@@ -471,6 +481,10 @@ sub RunStats(){
 
 		if(IsDisabled($host)){
 			print "  Status         : DISABLED\n";
+		} elsif(!-d "$backup_dir/$host"){
+			print "  Status         : NEW\n";
+			print "\n";
+			next;
 		}
 
 		my $st = ReadStatus($host);
