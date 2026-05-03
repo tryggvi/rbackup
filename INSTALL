@@ -1,0 +1,91 @@
+Installation
+============
+
+Requirements
+------------
+- Perl 5
+- rsync (must be installed on both the backup server and remote hosts)
+- SSH access to each remote host (key-based authentication strongly recommended)
+
+
+1. Install files
+----------------
+Clone rbackup to your preferred location, e.g. /opt/rbackup:
+    cd /opt
+    git clone https://github.com/tryggvi/rbackup.git
+
+2. Configure
+------------
+Copy the config template and edit it:
+
+    cp /opt/rbackup/rbackup.conf.dist /opt/rbackup/rbackup.conf
+    Edit /opt/rbackup/rbackup.conf
+
+At minimum set:
+
+    backup_dir   — where backups will be stored, e.g. /data/backup
+    logdir       — where log files will be written, e.g. /var/log/rbackup
+
+Then add a [hostname] block for each server you want to back up:
+
+    [web01.example.com]
+    user    = root
+    include = /etc, /home, /var/www
+    exclude = /tmp/
+
+If you need to connect by IP address instead of hostname, add:
+
+    ipaddr = 192.168.1.50
+
+
+3. Set up SSH key authentication
+---------------------------------
+rbackup connects to each remote host via SSH. Key-based authentication is required for unattended (cron) use. 
+
+On the backup server:
+
+    ssh-keygen -t ed25519
+
+Copy the public key to each remote host:
+
+    ssh-copy-id root@web01.example.com
+
+Test that passwordless login works before proceeding:
+    ssh root@web01.example.com
+
+
+4. Create required directories
+--------------------------------
+    mkdir -p /data/backup
+    mkdir -p /var/log/rbackup
+
+
+5. Test
+-------
+Run a dry run first to verify connectivity and paths without transferring data:
+
+    /opt/rbackup/rbackup.pl -t -v -r
+
+Check the listed hosts and config:
+
+    /opt/rbackup/rbackup.pl -H
+
+Run a real backup:
+
+    /opt/rbackup/rbackup.pl -r -v
+
+Check stats after the first run:
+
+    /opt/rbackup/rbackup.pl -s
+
+
+6. Schedule with cron
+----------------------
+Copy the cron file and adjust the path if needed:
+
+    cp rbackup.crond /etc/cron.d/rbackup
+    chmod 644 /etc/cron.d/rbackup
+
+The default schedule runs daily at 01:00. Edit /etc/cron.d/rbackup to change the time:
+
+    0 01 * * * root /opt/rbackup/rbackup.pl -r > /dev/null 2>&1
