@@ -28,7 +28,7 @@ sub script_dir {
 	$dir =~ s|/[^/]+$||;
 	return ($dir eq $0) ? '.' : $dir;
 }
-my ($o_verb, $o_help, $o_test, $o_debug, $o_run, $o_config);
+my ($o_verb, $o_help, $o_test, $o_debug, $o_run, $o_config, $o_stats);
 
 # Logging
 sub printlog($){
@@ -89,6 +89,7 @@ sub check_options {
 		'd'     => \$o_debug,   'debug'   => \$o_debug,
 		't'     => \$o_test,    'test'    => \$o_test,
 		'r'     => \$o_run,     'run'     => \$o_run,
+		's'     => \$o_stats,   'stats'   => \$o_stats,
 		'c=s'   => \$o_config,  'config=s'=> \$o_config,
 	);
 
@@ -110,6 +111,8 @@ sub check_options {
 
 	if(defined($o_run)){
 		RunBackup();
+	} elsif(defined($o_stats)){
+		RunStats();
 	} else {
 		help();
 	}
@@ -125,6 +128,8 @@ sub help() {
         Do not execute, only dry run
 -r, --run
         Run backup
+-s, --stats
+        Show backup statistics per host
 -c, --config
         Path to config file (default: rbackup.conf in script directory)
 -h, --help
@@ -206,6 +211,93 @@ sub gettime(){
 	}
 
 	return ($sec,$min,$hour,$day,$month,$year);
+}
+
+sub FormatSize($){
+	my ($bytes) = @_;
+	return "0 B" unless $bytes;
+	my @units = ('B', 'KB', 'MB', 'GB', 'TB');
+	my $i = 0;
+	while($bytes >= 1024 && $i < $#units){
+		$bytes /= 1024;
+		$i++;
+	}
+	return sprintf("%.1f %s", $bytes, $units[$i]);
+}
+
+sub Commify($){
+	my ($n) = @_;
+	$n = int($n);
+	$n =~ s/(\d)(?=(\d{3})+$)/$1,/g;
+	return $n;
+}
+
+sub RunStats(){
+	if(!-d $backup_dir){
+		print "Backup directory $backup_dir does not exist.\n";
+		return;
+	}
+
+	opendir(my $dh, $backup_dir) or die "Cannot open $backup_dir: $!\n";
+	my @hosts = sort grep { !/^\./ && -d "$backup_dir/$_" } readdir($dh);
+	closedir($dh);
+
+	if(!@hosts){
+		print "No backups found in $backup_dir.\n";
+		return;
+	}
+
+	print "Backup Statistics\n";
+	print "=" x 50 . "\n\n";
+
+	foreach my $host (@hosts){
+		my $current_dir      = "$backup_dir/$host/current";
+		my $differential_dir = "$backup_dir/$host/differential";
+
+		print "Host: $host\n";
+
+		if(-d $current_dir){
+			my $size_raw = `du -sb "$current_dir" 2>/dev/null`;
+			my ($size)   = $size_raw =~ /^(\d+)/;
+			$size ||= 0;
+
+			my $file_count = `find "$current_dir" -type f 2>/dev/null | wc -l`;
+			$file_count =~ s/^\s+|\s+$//g;
+
+			my $newest_epoch = `find "$current_dir" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1`;
+			chomp $newest_epoch;
+			my $newest_str = "n/a";
+			if($newest_epoch){
+				my ($sec,$min,$hour,$day,$month,$year) = (localtime(int($newest_epoch)))[0,1,2,3,4,5];
+				$newest_str = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $year+1900, $month+1, $day, $hour, $min, $sec);
+			}
+
+			printf("  Current backup : %s, %s files\n", FormatSize($size), Commify($file_count));
+			printf("  Newest file    : %s\n", $newest_str);
+		} else {
+			print "  Current backup : not found\n";
+		}
+
+		if(-d $differential_dir){
+			opendir(my $ddh, $differential_dir) or next;
+			my @revisions = sort grep { !/^\./ && -d "$differential_dir/$_" } readdir($ddh);
+			closedir($ddh);
+
+			my $rev_count  = scalar @revisions;
+			my $diff_size_raw = `du -sb "$differential_dir" 2>/dev/null`;
+			my ($diff_size)   = $diff_size_raw =~ /^(\d+)/;
+			$diff_size ||= 0;
+
+			my $diff_files = `find "$differential_dir" -type f 2>/dev/null | wc -l`;
+			$diff_files =~ s/^\s+|\s+$//g;
+
+			printf("  Revisions      : %d (total %s, %s files)\n", $rev_count, FormatSize($diff_size), Commify($diff_files));
+		} else {
+			print "  Revisions      : none\n";
+		}
+
+		print "\n";
+	}
 }
 
 sub RunBackup(){
