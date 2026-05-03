@@ -29,7 +29,7 @@ sub script_dir {
 	return ($dir eq $0) ? '.' : $dir;
 }
 my ($o_verb, $o_help, $o_test, $o_debug, $o_run, $o_config, $o_stats, $o_hosts, $o_host,
-    $o_list_files, $o_list_active_files, $o_list_archived_files);
+    $o_list_files, $o_list_active_files, $o_list_archived_files, $o_table);
 
 # Logging
 sub printlog($){
@@ -96,6 +96,7 @@ sub check_options {
 		'list-files'         => \$o_list_files,
 		'list-active-files'  => \$o_list_active_files,
 		'list-archived-files'=> \$o_list_archived_files,
+		'table'              => \$o_table,
 		'c=s'                => \$o_config,  'config=s' => \$o_config,
 	);
 
@@ -118,7 +119,11 @@ sub check_options {
 	if(defined($o_run)){
 		RunBackup();
 	} elsif(defined($o_stats)){
-		RunStats();
+		if(defined($o_table)){
+			RunStatsTable();
+		} else {
+			RunStats();
+		}
 	} elsif(defined($o_hosts)){
 		ListHosts();
 	} elsif(defined($o_list_files)){
@@ -148,6 +153,8 @@ sub help() {
         List configured hosts with include/exclude paths
 --host=HOSTNAME
         Limit -r, -s, or file listing to a single host
+--table
+        Show stats as a compact table (use with -s)
 --list-files
         List all files (active and archived) per host
 --list-active-files
@@ -316,6 +323,106 @@ sub Commify($){
 	$n = int($n);
 	$n =~ s/(\d)(?=(\d{3})+$)/$1,/g;
 	return $n;
+}
+
+sub RunStatsTable(){
+	if(!-d $backup_dir){
+		print "Backup directory $backup_dir does not exist.\n";
+		return;
+	}
+
+	my @hosts;
+	if($o_host){
+		my $on_disk   = -d "$backup_dir/$o_host";
+		my $in_config = exists $hosts{$o_host};
+		if(!$on_disk && !$in_config){
+			print "No backup found for $o_host.\n";
+			return;
+		}
+		@hosts = ($o_host);
+	} else {
+		my %seen;
+		if(-d $backup_dir){
+			opendir(my $dh, $backup_dir) or die "Cannot open $backup_dir: $!\n";
+			@hosts = sort grep { !/^\./ && -d "$backup_dir/$_" } readdir($dh);
+			closedir($dh);
+			%seen = map { $_ => 1 } @hosts;
+		}
+		foreach my $h (sort keys %hosts){
+			push @hosts, $h if IsDisabled($h) && !$seen{$h};
+		}
+		@hosts = sort @hosts;
+	}
+
+	if(!@hosts){
+		print "No backups found in $backup_dir.\n";
+		return;
+	}
+
+	my @rows;
+	foreach my $host (@hosts){
+		my $current_dir      = "$backup_dir/$host/current";
+		my $differential_dir = "$backup_dir/$host/differential";
+
+		my $st          = ReadStatus($host);
+		my $last_backup = $st->{timestamp} || '-';
+		my $status      = IsDisabled($host) ? 'DISABLED' : ($st->{status} || '-');
+		my $size        = '-';
+		my $files       = '-';
+		my $revisions   = '-';
+
+		if(-d $current_dir){
+			my $size_raw = `du -sb "$current_dir" 2>/dev/null`;
+			my ($bytes)  = $size_raw =~ /^(\d+)/;
+			$size = FormatSize($bytes || 0);
+
+			my $fc = `find "$current_dir" -type f 2>/dev/null | wc -l`;
+			$fc =~ s/^\s+|\s+$//g;
+			$files = Commify($fc);
+		}
+
+		if(-d $differential_dir){
+			opendir(my $ddh, $differential_dir) or next;
+			my @revs = grep { !/^\./ && -d "$differential_dir/$_" } readdir($ddh);
+			closedir($ddh);
+			$revisions = scalar @revs;
+		}
+
+		push @rows, {
+			host      => $host,
+			last      => $last_backup,
+			status    => $status,
+			size      => $size,
+			files     => $files,
+			revisions => "$revisions",
+			dir       => "$backup_dir/$host",
+		};
+	}
+
+	my %w = (
+		host      => length("Hostname"),
+		last      => length("Last Backup"),
+		status    => length("Status"),
+		size      => length("Size"),
+		files     => length("Files"),
+		revisions => length("Revisions"),
+		dir       => length("Backup Dir"),
+	);
+	foreach my $row (@rows){
+		for my $col (keys %w){
+			$w{$col} = length($row->{$col}) if length($row->{$col}) > $w{$col};
+		}
+	}
+
+	my $fmt = "%-$w{host}s  %-$w{last}s  %-$w{status}s  %$w{size}s  %$w{files}s  %$w{revisions}s  %-$w{dir}s\n";
+	my $sep = "-" x ($w{host} + $w{last} + $w{status} + $w{size} + $w{files} + $w{revisions} + $w{dir} + 12);
+
+	printf($fmt, "Hostname", "Last Backup", "Status", "Size", "Files", "Revisions", "Backup Dir");
+	print "$sep\n";
+	foreach my $row (@rows){
+		printf($fmt, $row->{host}, $row->{last}, $row->{status},
+		       $row->{size}, $row->{files}, $row->{revisions}, $row->{dir});
+	}
 }
 
 sub RunStats(){
